@@ -25,7 +25,7 @@ my $netstat = "/usr/bin/netstat";
 my $ipfw = "/sbin/ipfw";
 
 use vars qw($VERSION);
-$VERSION = 1.0;
+$VERSION = 1.1;
 
 require Exporter;
 
@@ -59,6 +59,59 @@ use Carp;
 # BEGIN { use IO::Handle; open(DEBUG, ">&STDERR"); autoflush DEBUG 1; }
 BEGIN { open(DEBUG, ">/dev/null"); };
 
+sub get_netmask
+{
+	my ($net, $mask) = @_;
+	$mask = '' unless defined $mask;
+	if ($net =~ m,^(\d+\.\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+)$,) {
+		my $base = $1;
+		my $dotmask = $2;
+		my $bits = 0;
+		for $c (split(/\./, $dotmask)) {
+			$bits += 8-int(log(256-$c)/log(2));
+			last unless $c == 255;
+		}
+		return($base, $bits);
+	} elsif ($net =~ m,^(\d+\.\d+\.\d+\.\d+)/(\d+)$,) {
+		return ($1, $2);
+	} elsif (($net =~ m,^\d+\.\d+\.\d+\.\d+$,) &&
+		($mask =~ m,0x[a-z0-9]+,i)) {
+		use integer;
+		my $nm = hex($mask);
+		my $bits = 32;
+		while ((($nm & 0x1) == 0) && ($bits > 0)) {
+			$bits--;
+			$nm >>= 1;
+		}
+		die if ($bits < 16);
+		die unless ($net =~ /^(\d+\.\d+)\.(\d+)\.(\d+)$/);
+		my ($b, $c, $a) = ($1, $2, $3);
+		if ($bits < 24) {
+			$a = 0;
+			$b &= 255-2**(23-$bits);
+		} elsif ($bits < 32) {
+			$a &= 256-2**(31-$bits);
+		}
+		my $base = "$b.$c.$a";
+		print DEBUG "get_netmask($net, $mask) = $base/$bits\n";
+		return ($base, $bits);
+	} elsif ($net =~ /^\d+\.\d+\.\d+\.\d+$/ && ! $mask) {
+		return ($net, 32);
+	} elsif ($net =~ /^\d+\.\d+\.\d+$/ && ! $mask) {
+		return ("$net.0", 24);
+	} elsif ($net =~ /^\d+\.\d+$/ && ! $mask) {
+		return ("$net.0.0", 16);
+	} elsif ($net =~ /^\d+$/ && ! $mask) {
+		return ("$net.0.0.0", 8);
+	} elsif ($net =~ m,^(\d+\.\d+\.\d+)/(\d+)$,) {
+		return ("$1.0", $2);
+	} elsif ($net eq 'default') {
+		return ("0.0.0.0", 0);
+	} else {
+		die "could not parse $net $mask";
+	}
+}
+
 
 sub watch
 {
@@ -83,38 +136,41 @@ sub us { push(@us, @_); watch(@_); };
 sub not_us { push(@not_us, @_); watch(@_); };
 sub symmetric { push(@symmetric, @_); watch(@_); };
 
-sub get_netmask
+sub mark_addresses
 {
-	my ($net, $mask) = @_;
-	$mask = '' unless defined $mask;
-	if ($net =~ m,^(\d+\.\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+)$,) {
-		#XXX
-	} elsif ($net =~ m,^(\d+\.\d+\.\d+\.\d+)/(\d+)$,) {
-		return ($1, $2);
-	} elsif (($net =~ m,^\d+\.\d+\.\d+\.\d+$,) &&
-		($mask =~ m,0x[a-z0-9]+,i)) {
-		use integer;
-		my $nm = hex($mask);
-		my $bits = 32;
-		while ($nm & 0x1 == 0 && $bits > 0) {
-			$bits--;
-			$nm >>= 1;
+	my ($aref, $network, $bits, $value, $rem) = @_;
+	die "can only consolidate class Bs or smaller" 
+		if $bits < 16;
+
+	if ($bits < 24) {
+		$network =~ /^(\d+\.\d+)\.(\d+)\.\d+$/
+			or die "could not grok netnum $network";
+		my ($base, $ext) = ($1, $2);
+		my $count = 2**(24-$bits);
+		while ($count > 0) {
+			for my $j (0..255) {
+				$aref->{"$base.$ext.$j"} = $value;
+				print DEBUG "$rem mark{$base.$ext.$j} = $value\n";
+			}
+			$ext++;
+			$count--;
 		}
-		return ($net, $bits);
-	} elsif ($net =~ /^\d+\.\d+\.\d+\.\d+$/ && ! $mask) {
-		return ($net, 32);
-	} elsif ($net =~ /^\d+\.\d+\.\d+$/ && ! $mask) {
-		return ("$net.0", 24);
-	} elsif ($net =~ /^\d+\.\d+$/ && ! $mask) {
-		return ("$net.0.0", 16);
-	} elsif ($net =~ /^\d+$/ && ! $mask) {
-		return ("$net.0.0.0", 8);
-	} elsif ($net =~ m,^(\d+\.\d+\.\d+)/(\d+)$,) {
-		return ("$1.0", $2);
-	} elsif ($net eq 'default') {
-		return ("0.0.0.0", 0);
 	} else {
-		die "could not parse $net $mask";
+		$network =~ /^(\d+\.\d+\.\d+)\.(\d+)$/
+			or die "could not grok netnum $network";
+		my ($base, $ext) = ($1, $2);
+		my $count = 2**(32-$bits);
+		while ($count > 0) {
+			$aref->{"$base.$ext"} = $value;
+print DEBUG "rem $rem\n";
+print DEBUG "base $base\n";
+print DEBUG "ext $ext\n";
+print DEBUG "value $value\n";
+confess unless $value;
+			print DEBUG "$rem mark{$base.$ext} = $value\n";
+			$ext++;
+			$count--;
+		}
 	}
 }
 
@@ -124,18 +180,7 @@ sub consolidate
 	for my $c (@consolidate) {
 		print DEBUG "consolidate $c\n";
 		my ($network, $bits) = get_netmask($c);
-		die "can only consolidate class Cs or smaller" 
-			if $bits < 24;
-		$network =~ /^(\d+\.\d+\.\d+)\.(\d+)$/
-			or die "could not grok netnum $network";
-		my ($base, $ext) = ($1, $2);
-		my $count = 2**(32-$bits);
-		while ($count > 0) {
-			$consolidate{"$base.$ext"} = $c;
-			print DEBUG "consolidate{$base.$ext} = $c\n";
-			$ext++;
-			$count--;
-		}
+		mark_addresses(\%consolidate, $network, $bits, $c, 'consolidate');
 	}
 }
 
@@ -146,22 +191,24 @@ sub get_direct_nets
 	my ($if) = @_;
 
 	my @n;
-	for my $i (0..$#{$interface->{$if}->{'IP'}}) {
-		my $ip = $interface->{$if}->{'IP'}->[$i];
-		if ($interface->{$if}->{'TYPE'} eq 'BROADCAST') {
+	for my $i (0..$#{$interfaces{$if}->{'IP'}}) {
+		my $ip = $interfaces{$if}->{'IP'}->[$i];
+print DEBUG "ip($if) = $ip\n";
+		if (defined $interfaces{$if}->{'NETMASK'}) {
 			my ($base, $bits) = get_netmask(
-				$ip, $interface->{$if}->{'NETMASK'}->[$i]);
+				$ip, $interfaces{$if}->{'NETMASK'}->[$i]);
 			push(@n, "$base/$bits");
 		} else {
 			push(@n, $ip);
 		}
 	}
-	return (); 
+	print DEBUG "direct nets($if) = @n\n";
+	return @n;
 }
 
 sub interface
 {
-	my ($ifname, $ifaddr, $type, $flags, $dataname, $data) = @_;
+	my ($ifname, $ifaddr, $type, $flags, %datas) = @_;
 	if (exists $interfaces{$ifname}) {
 		die "$ifname not $type!" 
 			unless $interfaces{$ifname}->{'TYPE'} eq $type;
@@ -169,10 +216,11 @@ sub interface
 		$interfaces{$ifname} = { 
 			'IP' => [], 
 			'IPindex' => {},
-			'ROUTES' => {},
+			'ROUTES' => [],
 		};
-		$interfaces{$ifname}->{$dataname} = []
-			if $dataname;
+		for my $k (keys %datas) {
+			$interfaces{$ifname}->{$k} = [];
+		}
 		$interfaces{$ifname}->{'TYPE'} = $type;
 	}
 	if ($consolidate{$ifaddr}) {
@@ -180,8 +228,10 @@ sub interface
 		return if exists ${$interfaces{$ifname}->{'IPindex'}}{$ifaddr};
 	}
 	push(@{$interfaces{$ifname}->{'IP'}}, $ifaddr);
-	push(@{$interfaces{$ifname}->{$dataname}}, $data)
-		if $dataname;
+	for my $k (keys %datas) {
+		push(@{$interfaces{$ifname}->{$k}}, $datas{$k});
+		print DEBUG "DATA $ifname $k = $datas{$k}\n";
+	}
 	$interfaces{$ifname}->{'IPindex'}->{$ifaddr} = $data;
 }
 
@@ -197,8 +247,12 @@ sub get_interfaces
 		} elsif (/^\s+inet (\S+) netmask (\S+) broadcast (\S+)\s*$/) {
 			interface($ifnam, $1, 'BROADCAST', $flags, 'NETMASK', $2);
 			next;
-		} elsif (/^\s+inet (\S+) --\> (\S+)/) {
-			interface($ifnam, $1, 'POINTTOPOINT', $flags, 'PEER', $2);
+		} elsif (/^\s+inet (\S+) --\> (\S+)(?: netmask (\S+))?/) {
+			if ($3) {
+				interface($ifnam, $1, 'POINTTOPOINT', $flags, 'PEER', $2, NETMASK, $3);
+			} else {
+				interface($ifnam, $1, 'POINTTOPOINT', $flags, 'PEER', $2);
+			}
 		} elsif (/^\s+inet (\S+) netmask (\S+)\s*$/) {
 			interface($ifnam, $1, 'LOOPBACK', $flags);
 		} elsif (/^\s+ether\s+\S+/) {
@@ -212,34 +266,44 @@ sub get_interfaces
 
 my %track_net;
 my %track_interface;
-
-sub c_addr
-{
-	my ($dest) = @_;
-	my ($base, $mask) = get_netmask($dest);
-	($base =~ m/^(\d+\.\d+\.\d+)\.\d+$/)
-		or die "parse route dest $dest ($base)";
-	return $1;
-}
+my %route;
 
 sub route 
 {
-	my ($dest, $gate, $interface) = @_;
+	my ($destnet, $gate, $interface) = @_;
 
-	return unless (exists $track_net{c_addr($dest)}
+	my ($dest, $mask) = get_netmask($destnet);
+	($dest =~ m/^(\d+\.\d+\.\d+)\.\d+$/)
+		or die "parse route dest $dest ($destnet)";
+	my $base = $1;
+
+	return unless (exists $track_net{$base}
 		|| exists $track_interface{$interface});
 
+	push(@{$interfaces{$interface}->{'ROUTES'}}, "$dest/$mask");
+	$route{"$dest/$mask"} = $interface;
+	print DEBUG "Added route for $dest/$mask over $interface\n";
 }
 
-sub get_direct_interface
+sub get_route
 {
 	my ($net) = @_;
-
-	return $interface;
+	my ($dest, $mask) = get_netmask($net);
+	return $route{"$dest/$mask"} if exists $route{"$dest/$mask"};
+	warn "No route for $net ($dest/$mask) found";
 }
 
-# XXX
-sub get_nets { return ()}
+sub get_nets 
+{
+	my ($interface) = @_;
+
+	my @r = @{$interfaces{$interface}->{'ROUTES'}};
+	my %r;
+	my @dn = get_direct_nets($interface);
+	@r{@r} = @r;
+	@r{@dn} = @dn;
+	return @r;
+}
 
 sub get_routes 
 {
@@ -257,7 +321,7 @@ sub get_routes
 			my $count = 2**(24-$mask);
 			print DEBUG "Count: $count on $net ($mask)\n";
 			while ($count > 0) {
-				$track_net{"$netbase.$ext.0"} = $net;
+				$track_net{"$netbase.$ext"} = $net;
 				print DEBUG "track_net{$netbase.$ext.0}\n";
 				$ext++;
 				$count--;
@@ -285,6 +349,17 @@ sub get_routes
 		route($dest, $gate, $interface);
 	}
 	close(NETSTAT);
+
+	for my $i (keys %interfaces) {
+		my @r = @{$interfaces{$interface}->{'ROUTES'}};
+		my %r;
+		@r{@r} = @r;
+		for my $dn (get_direct_nets($i)) {
+			next if exists $r{$dn};
+			print DEBUG "Inserting $dn route over $i\n";
+			route($dn, "127.0.0.1", $i);
+		}
+	}	
 }
 
 #
@@ -431,7 +506,6 @@ sub no_looping
 				"deny all from $r to any out recv $i xmit $i # nlb");
 		}
 	}
-	# XXX @symmetric
 }
 
 sub drop_unwanted
@@ -457,6 +531,8 @@ sub no_spoofing_by_us
 	}
 }
 
+my %spoof_nets_done;
+
 sub no_spoofing_us
 {
 	begin() unless $begun;
@@ -471,13 +547,38 @@ sub no_spoofing_us
 	# network
 	for my $i (sort keys %interfaces) {
 		print DEBUG "making sure traffic from $i is really from $i\n";
-		# XXX this might give duplication
+
+		# traffic that claims to be from ourself will be taken
+		# care of with the from-self rules
+		for my $ip (@{$interfaces{$i}->{'IP'}}) {
+			my ($base, $bits) = get_netmask($ip);
+			next if exists $spoof_nets_done{$base};
+			mark_addresses(\%spoof_nets_done, $base, $bits, $ip, 'self') if $bits;
+		}
+		
 		for my $net (get_direct_nets($i)) {
-			print "DEBUG r=$net\n";
+			print DEBUG "r=$net\n";
+			my ($base, $bits) = get_netmask($net);
+			next if exists $spoof_nets_done{$base};
+			mark_addresses(\%spoof_nets_done, $base, $bits, $net, 'ns-la') if $bits;
 			push(@{$from_net_rules{$net}},
 				"=skiprule all from $net to any in via $i # ns-la",
-				"=deny all from $net to any");
+				"=deny all from $net to any in");
 		}
+	}
+
+	# traffic for networks that route symmetrically should always
+	# come in via the same interface
+	for my $net (@symmetric) {
+		next if exists $spoof_nets_done{$net};
+		my $i = get_route($net);
+		next unless $i;
+		my ($base, $bits) = get_netmask($net);
+		next if exists $spoof_nets_done{$base};
+		mark_addresses(\%spoof_nets_done, $base, $bits, $net, 'ns-s') if $bits;
+		push(@{$from_net_rules{$net}},
+			"=skiprule all from $net to any in via $i # ns-s",
+			"=deny all from $net to any in");
 	}
 }
 
@@ -489,6 +590,9 @@ sub no_leaf_spoofing
 	# people who are in the leaf can't pretend otherwise
 	for my $i (@leaf) {
 		for my $r (get_nets($i)) {
+			my ($base, $bits) = get_netmask($r);
+			next if exists $spoof_nets_done{$base};
+			mark_addresses(\%spoof_nets_done, $base, $bits, $r, 'ns-l') if $bits;
 			push(@{$from_net_rules{$r}},
 				"=skiprule all from $r to any in via $i # ns-l",
 				"=deny all from $r to any");
@@ -650,8 +754,8 @@ sub pass1
 
 	push(@rules, "pass tcp from any to any established");
 
-	gensect(undef, 1, "all <from> not< =KEY> to any", %from_net_rules);
-	gensect(undef, 1, "all from any <to> not< =KEY>", %to_net_rules);
+	gensect(undef, 1, "all <from> not <=KEY to> any", %from_net_rules);
+	gensect(undef, 1, "all from any <to> not <=KEY>", %to_net_rules);
 
 	push(@rules, "=rulenum 20000");
 
