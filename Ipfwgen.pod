@@ -405,6 +405,12 @@ use this with hosts that have multiple IP addresses.  The =host:I<hostname>
 specifier is the only specifier that can be used more than once in a 
 rule and the only one that can be combined with other specifiers.
 
+=item =IF0
+
+FreeBSD treats the first interface a specially.  The =IF0 specifier will
+be replaced by the name of the first interface.  =IF0 can be combined with
+other meta specifiers.
+
 =back
 
 =head1 SEQUENCE

@@ -53,6 +53,7 @@ my @not_us;
 my @symmetric;
 my @interesting;
 my %consolidate;
+my $if0; # first interface
 
 use Carp;
 
@@ -105,6 +106,8 @@ sub get_netmask
 		return ("$net.0.0.0", 8);
 	} elsif ($net =~ m,^(\d+\.\d+\.\d+)/(\d+)$,) {
 		return ("$1.0", $2);
+	} elsif ($net =~ m,^(\d+\.\d+)/(\d+)$,) {
+		return ("$1.0.0", $2);
 	} elsif ($net eq 'default') {
 		return ("0.0.0.0", 0);
 	} else {
@@ -244,6 +247,7 @@ sub get_interfaces
 		if (/^([a-z]+\d+): flags=[\da-f]+\<([A-Z0-9,]+)\> mtu \d+/) {
 			$ifnam = $1;
 			$flags = $2;
+			$if0 = $ifnam unless defined $if0;
 		} elsif (/^\s+inet (\S+) netmask (\S+) broadcast (\S+)\s*$/) {
 			interface($ifnam, $1, 'BROADCAST', $flags, 'NETMASK', $2);
 			next;
@@ -256,6 +260,8 @@ sub get_interfaces
 		} elsif (/^\s+inet (\S+) netmask (\S+)\s*$/) {
 			interface($ifnam, $1, 'LOOPBACK', $flags);
 		} elsif (/^\s+ether\s+\S+/) {
+			# ignore
+		} elsif (/^\s+media:\s+\S+/) {
 			# ignore
 		} else {
 			warn "did not understand $ifconfig -a output: $_";
@@ -526,8 +532,10 @@ sub no_spoofing_by_us
 	begin() unless $begun;
 	for my $o (@outside) {
 		push(@{$out_rules{$o}},
-			"=skiprule all from =US to any out xmit $o # ns-o",
-			"=deny_log all from any to any out xmit $o");
+			"=skipto nso-ok all from =US to any out xmit $o # ns-o",
+			"=skipto nso-ok icmp from 127.0.0.1 to any out xmit $o",
+			"=deny_log all from any to any out xmit $o",
+			"=label nso-ok");
 	}
 }
 
@@ -838,6 +846,7 @@ sub pass2
 			my $ip = ipdots($addr);
 			$x =~ s/=host:\Q$hname\E/$ip/g;
 		}
+		$x =~ s/=IF0/$if0/g;
 		if ($x =~ /=IN/) {
 			for my $i (sort keys %interfaces) {
 				my $y = $x;

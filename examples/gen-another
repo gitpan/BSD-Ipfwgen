@@ -11,8 +11,15 @@ use IO::Handle;
 outside 'fxp0';
 leaf qw(
 	etha32
-	etha33
+	etha34
+	etha35
 	etha36
+	etha37
+	etha38
+	etha39
+	etha40
+	etha41
+	etha42
 );
 consolidate '209.66.121.128/25';
 us qw(
@@ -24,14 +31,15 @@ us qw(
 	140.174.154.0/24 
 	207.33.66.0/24 
 	209.66.121.0/24
+	140.174.37.22
     );
 not_us qw(
 	209.66.121.0/29
 );
 
-count_by_interface();
-count_by_tcp qw(80 119 21 53 25 871 513 23 6667);
-count_by_address qw();
+# count_by_interface();
+# count_by_tcp qw(80 119 21 53 25 871 513 23 6667);
+# count_by_address qw();
 drop_unwanted qw(
 	192.168.0.0:255.255.0.0
 	172.16.0.0:255.240.0.0
@@ -49,7 +57,11 @@ to_me_rules <<'';
 	=skipto nfs-okay all from any to any
 	=skipto nfs-okay all from any to any frag # this should be not be used
 	=label is-nfs
-	=skipto nfs-okay all from 140.174.82.0/26 to any 
+	=rulenum 20000
+	pass udp from 209.66.121.17 111,2049 to 209.157.69.252 out xmit =IF0 # BUG IN FREEBSD
+	=skipto nfs-okay all from 209.157.69.224/27 to any 
+	=skipto nfs-okay all from 209.157.64.208/29 to any 
+	=skipto nfs-okay all from 209.157.64.0/25 to any 
 	=skipto nfs-okay all from any to any in via 'lo*'
 	=skipto nfs-okay all from =ME to any 
 	=skipto nfs-okay all from any to any frag # this should be not be used
