@@ -25,7 +25,7 @@ my $netstat = "/usr/bin/netstat";
 my $ipfw = "/sbin/ipfw";
 
 use vars qw($VERSION);
-$VERSION = 1.1;
+$VERSION = 1.2;
 
 require Exporter;
 
@@ -527,7 +527,7 @@ sub no_spoofing_by_us
 	for my $o (@outside) {
 		push(@{$out_rules{$o}},
 			"=skiprule all from =US to any out xmit $o # ns-o",
-			"=deny all from any to any out via $o");
+			"=deny all from any to any out xmit $o");
 	}
 }
 
@@ -562,8 +562,10 @@ sub no_spoofing_us
 			next if exists $spoof_nets_done{$base};
 			mark_addresses(\%spoof_nets_done, $base, $bits, $net, 'ns-la') if $bits;
 			push(@{$from_net_rules{$net}},
-				"=skiprule all from $net to any in via $i # ns-la",
-				"=deny all from $net to any in");
+				"=skipto okay-if-$net all from $net to any in via $i # ns-la",
+				"=skiprule all from $net to any in recv lo*",
+				"=deny all from $net to any in",
+				"=label okay-if-$net");
 		}
 	}
 
@@ -595,7 +597,7 @@ sub no_leaf_spoofing
 			mark_addresses(\%spoof_nets_done, $base, $bits, $r, 'ns-l') if $bits;
 			push(@{$from_net_rules{$r}},
 				"=skiprule all from $r to any in via $i # ns-l",
-				"=deny all from $r to any");
+				"=deny all from $r to any in");
 			push(@{$in_from{$i}},
 				"=skipto okay-outspoof-$i all from $r to any in via $i # ns-l");
 		}
