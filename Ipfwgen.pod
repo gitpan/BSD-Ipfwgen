@@ -298,6 +298,14 @@ other hand, it helps prevent accididental computer death when rebuilding
 the firewall.  It's a good idea to use INSECURE while testing your
 firewall, but not to use it for final deployment.
 
+=item LOG_DENIES
+
+Specifies that in general, when packets are denied, they should be 
+logged.  Some rules will still not log: the anti-looping rules tend
+to deny a lot of packets and logging those is both boring and wasteful.
+Rules that are defined by hand will that use =deny will log the denies
+if this is set.
+
 =back
 
 =head1 RULE LANGUAGE
@@ -348,7 +356,18 @@ after where the I<label> is specified.
 =item =deny
 
 Specifies that the action for this filter rule is to deny the packet.
-just plain B<deny> can be used instead.
+Packets denied using =deny will be logged if the generate option 
+LOG_DENIES is specified.
+
+=item =deny_log
+
+Specifies that the action for this filter is to deny the packet.  Just 
+plain B<deny log> can be used insted.
+
+=item =deny_no_log
+
+Specifies that the action for this filter is to deny the packet.  Just
+plain B<deny> can be used instead.
 
 =back
 

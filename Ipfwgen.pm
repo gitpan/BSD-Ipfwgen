@@ -25,7 +25,7 @@ my $netstat = "/usr/bin/netstat";
 my $ipfw = "/sbin/ipfw";
 
 use vars qw($VERSION);
-$VERSION = 1.2;
+$VERSION = 1.3;
 
 require Exporter;
 
@@ -488,14 +488,14 @@ sub no_looping
 	begin() unless $begun;
 	for my $o (@outside) {
 		push(@{$out_rules{$o}},
-			"deny all from any to =US out xmit $o # nlo");
+			"=deny_nolog all from any to =US out xmit $o # nlo");
 	}
 
 	for my $i (sort keys %interfaces) {
 		if ($interfaces{$i}->{'TYPE'} eq 'POINTTOPOINT') {
 			push(@{$out_rules{$i}},
-				"deny tcp from any to any out recv $i xmit $i # nlnb",
-				"deny udp from any to any out recv $i xmit $i # nlnb");
+				"=deny_nolog tcp from any to any out recv $i xmit $i # nlnb",
+				"=deny_nolog udp from any to any out recv $i xmit $i # nlnb");
 		}
 	}
 
@@ -503,7 +503,7 @@ sub no_looping
 		next unless $interfaces{$i}->{'TYPE'} eq 'BROADCAST';
 		for my $r (get_nets{$i}) {
 			push(@{$out_rules{$i}},
-				"deny all from $r to any out recv $i xmit $i # nlb");
+				"=deny_nolog all from $r to any out recv $i xmit $i # nlb");
 		}
 	}
 }
@@ -514,7 +514,7 @@ sub drop_unwanted
 	begin() unless $begun;
 	for my $u (@unwanted) {
 		push(@{$from_net_rules{$u}},
-			"=deny all from $u to any # unwanted");
+			"=deny_nolog all from $u to any # unwanted");
 	}
 }
 
@@ -527,7 +527,7 @@ sub no_spoofing_by_us
 	for my $o (@outside) {
 		push(@{$out_rules{$o}},
 			"=skiprule all from =US to any out xmit $o # ns-o",
-			"=deny all from any to any out xmit $o");
+			"=deny_log all from any to any out xmit $o");
 	}
 }
 
@@ -540,7 +540,7 @@ sub no_spoofing_us
 	# people outside can't spoof people inside
 	for my $o (@outside) {
 		push(@{$in_rules{$o}},
-			"deny all from =US to any in recv $o # ns-o");
+			"=deny_log all from =US to any in recv $o # ns-o");
 	}
 
 	# traffic from locally attached networks must come in via that
@@ -563,8 +563,8 @@ sub no_spoofing_us
 			mark_addresses(\%spoof_nets_done, $base, $bits, $net, 'ns-la') if $bits;
 			push(@{$from_net_rules{$net}},
 				"=skipto okay-if-$net all from $net to any in via $i # ns-la",
-				"=skiprule all from $net to any in recv lo*",
-				"=deny all from $net to any in",
+				"=skiprule all from $net to any in recv 'lo*'",
+				"=deny_log all from $net to any in",
 				"=label okay-if-$net");
 		}
 	}
@@ -580,7 +580,7 @@ sub no_spoofing_us
 		mark_addresses(\%spoof_nets_done, $base, $bits, $net, 'ns-s') if $bits;
 		push(@{$from_net_rules{$net}},
 			"=skiprule all from $net to any in via $i # ns-s",
-			"=deny all from $net to any in");
+			"=deny_log all from $net to any in");
 	}
 }
 
@@ -597,12 +597,12 @@ sub no_leaf_spoofing
 			mark_addresses(\%spoof_nets_done, $base, $bits, $r, 'ns-l') if $bits;
 			push(@{$from_net_rules{$r}},
 				"=skiprule all from $r to any in via $i # ns-l",
-				"=deny all from $r to any in");
+				"=deny_log all from $r to any in");
 			push(@{$in_from{$i}},
 				"=skipto okay-outspoof-$i all from $r to any in via $i # ns-l");
 		}
 		push(@{$in_from{$i}},
-			"=deny all from any to any in via $i # ns-l",
+			"=deny_log all from any to any in via $i # ns-l",
 			"=label okay-outspoof-$i");
 	}
 }
@@ -789,7 +789,7 @@ sub pass1
 	if ($options{'DEFAULT-ACCEPT'}) {
 		push(@rules, "pass all from any to any");
 	} else {
-		push(@rules, "deny all from any to any");
+		push(@rules, "=deny all from any to any");
 	}
 
 	push(@rules, @count);
@@ -822,7 +822,13 @@ sub pass2
 			$l = $genlabel++;
 		} else {
 			#$x =~ s/^=deny/=skipto deny-target/;
-			$x =~ s/^=deny/deny/;
+			$x =~ s/^=deny_log/deny log/;
+			$x =~ s/^=deny_nolog/deny/;
+			if ($options{'LOG_DENIES'}) {
+				$x =~ s/^=deny/deny log/;
+			} else {
+				$x =~ s/^=deny/deny/;
+			}
 		}
 		while ($x =~ /=host:(\S+)/) {
 			my $hname = $1;
@@ -936,10 +942,11 @@ sub generate
 
 	# don't allow others to pretend that they are us
 	unshift(@not_from_me_rules, 
-		"=skiprule all from any to any in recv lo*",
-		"=deny all from =ME to any # ns-op");
+		"=skiprule all from any to any in recv 'lo*'",
+		"=deny_log all from =ME to any # ns-op");
 
 	my @legal = qw(
+		LOG_DENIES
 		DEFAULT-ACCEPT
 		INSECURE
 	);

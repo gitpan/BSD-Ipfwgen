@@ -9,7 +9,11 @@ use BSD::Ipfwgen;
 use IO::Handle;
 
 outside 'fxp0';
-leaf 'etha32';
+leaf qw(
+	etha32
+	etha33
+	etha36
+);
 consolidate '209.66.121.128/25';
 us qw(
 	140.174.82.0/24 
@@ -22,7 +26,7 @@ us qw(
 	209.66.121.0/24
     );
 not_us qw(
-	209.66.121.0/26
+	209.66.121.0/29
 );
 
 count_by_interface();
@@ -40,11 +44,16 @@ no_spoofing_by_us();
 no_leaf_spoofing();
 
 to_me_rules <<'';
-	=deny udp from not 140.174.82.0/26 to any 111,2049 # portmap, NFS
-	=deny tcp from not 140.174.82.0/26 to any 111 # portmap
-
-from_me_rules <<'';
-	=deny udp from any 111,2049 to not 140.174.82.0/26 # portmap, NFS
-	=deny tcp from any 111 to not 140.174.82.0/26 # portmap
+	=skipto is-nfs udp from any to any 111,2049 # NFS RULES
+	=skipto is-nfs tcp from any to any 111,2049
+	=skipto nfs-okay all from any to any
+	=skipto nfs-okay all from any to any frag # this should be not be used
+	=label is-nfs
+	=skipto nfs-okay all from 140.174.82.0/26 to any 
+	=skipto nfs-okay all from any to any in via 'lo*'
+	=skipto nfs-okay all from =ME to any 
+	=skipto nfs-okay all from any to any frag # this should be not be used
+	=deny all from any to any # NFS
+	=label nfs-okay
 
 generate qw(INSECURE DEFAULT-ACCEPT);
