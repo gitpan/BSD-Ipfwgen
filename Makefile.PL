@@ -6,6 +6,6 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
 	'NAME' => 'BSD::Ipfwgen',
 	'DISTNAME' => 'BSD-Ipfwgen',
-	'VERSION' => '1.4',
+	'VERSION' => '1.5',
 	'dist'   => {COMPRESS=>'gzip', SUFFIX=>'gz'}
 );

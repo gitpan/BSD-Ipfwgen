@@ -25,7 +25,7 @@ my $netstat = "/usr/bin/netstat";
 my $ipfw = "/sbin/ipfw";
 
 use vars qw($VERSION);
-$VERSION = 1.3;
+$VERSION = 1.5;
 
 require Exporter;
 
@@ -44,8 +44,11 @@ require Exporter;
 	to_me_rules from_me_rules
 	not_to_me_rules not_from_me_rules
 	in_interface_rules out_interface_rules
+	from_us to_us
 	);
 
+my @from_us;
+my @to_us;
 my @outside;
 my @leaf;
 my @us;
@@ -138,6 +141,8 @@ sub interesting { push(@interesting, @_); watch(@_); }
 sub us { push(@us, @_); watch(@_); };
 sub not_us { push(@not_us, @_); watch(@_); };
 sub symmetric { push(@symmetric, @_); watch(@_); };
+sub from_us { push(@from_us, @_); watch(@_); };
+sub to_us { push(@to_us, @_); watch(@_); };
 
 sub mark_addresses
 {
@@ -313,7 +318,7 @@ sub get_nets
 
 sub get_routes 
 {
-	for my $net (@us, @symmetric, @interesting, @not_us) {
+	for my $net (@us, @symmetric, @interesting, @not_us, @from_us, @to_us) {
 		my ($base, $mask) = get_netmask($net);
 		if ($mask >= 24) {
 			$base =~ m/^(\d+\.\d+\.\d+)\.\d+$/
@@ -533,6 +538,7 @@ sub no_spoofing_by_us
 	for my $o (@outside) {
 		push(@{$out_rules{$o}},
 			"=skipto nso-ok all from =US to any out xmit $o # ns-o",
+			"=skipto nso-ok all from =FROMUS to any out xmit $o # ns-o",
 			"=skipto nso-ok icmp from 127.0.0.1 to any out xmit $o",
 			"=deny_log all from any to any out xmit $o",
 			"=label nso-ok");
@@ -710,33 +716,45 @@ sub pass1
 {
 	push(@rules, "=countby 10", "=rulenum 1000");
 	gensect(undef, 0, "any to any <in via =KEY>", %count_in);
+	push(@rules, "=gap");
 	gensect(undef, 0, "any to any <out via =KEY>", %count_out);
+	push(@rules, "=gap");
 
 	if (%count_udp_from || %count_udp_to) {
 		push(@rules, "=skiprule udp from any to any",
 			"=skipto not-counting-udp all from any to any");
+		push(@rules, "=gap");
 		gensect(undef, 0,
 			"<udp from> any <=KEY to> any",
 			%count_udp_from);
+		push(@rules, "=gap");
 		gensect(undef, 0,
 			"<udp from> any <to> any <=KEY>",
 			%count_udp_to);
+		push(@rules, "=gap");
 		push(@rules, "=label not-counting-udp");
+		push(@rules, "=gap");
 	}
 
 	push(@rules, "=skiprule tcp from any to any # skipover tcp-from & to",
 		"=skipto not-counting-tcp all from any to any");
+	push(@rules, "=gap");
 	gensect(undef, 0,
 		"<tcp from> any <=KEY to> any",
 		%count_tcp_from);
+	push(@rules, "=gap");
 	gensect(undef, 0,
 		"<tcp from> any <to> any <=KEY>",
 		%count_tcp_to);
+	push(@rules, "=gap");
 	push(@rules, "=label not-counting-tcp");
+	push(@rules, "=gap");
 
 	push(@rules, @count);
+	push(@rules, "=gap");
 
 	push(@rules, "=rulenum 10000");
+	push(@rules, "=gap");
 
 	# recv only happens on packets that we didn't generate
 	if (@from_us_fules || @not_from_me_rules) {
@@ -747,6 +765,7 @@ sub pass1
 			"=label done-from-us",
 			@not_from_me_rules,
 			"=label done-not-from-us");
+		push(@rules, "=gap");
 	}
 
 	if (@to_me_rules || @not_to_me_rules) {
@@ -757,15 +776,21 @@ sub pass1
 			"=label done-to-us",
 			@to_me_rules,
 			"=label done-not-to-us");
+		push(@rules, "=gap");
 	}
 
 	gensect(undef, 0, "all from any to any in <recv =KEY>", %in_rules);
+	push(@rules, "=gap");
 	gensect(undef, 0, "all from any to any out <xmit =KEY>", %out_rules);
+	push(@rules, "=gap");
 
 	push(@rules, "pass tcp from any to any established");
+	push(@rules, "=gap");
 
 	gensect(undef, 1, "all <from> not <=KEY to> any", %from_net_rules);
+	push(@rules, "=gap");
 	gensect(undef, 1, "all from any <to> not <=KEY>", %to_net_rules);
+	push(@rules, "=gap");
 
 	push(@rules, "=rulenum 20000");
 
@@ -773,23 +798,29 @@ sub pass1
 		push(@rules, "=skiprule udp from any to any",
 			"=skipto not-filtering-udp all from any to any")
 			if scalar(%udp_from_rules) + scalar(%udp_to_rules) > 4;
+		push(@rules, "=gap");
 		gensect(undef, 0,
 			"<udp from> any <=KEY to> any",
 			%udp_from_rules);
+		push(@rules, "=gap");
 		gensect(undef, 0,
 			"<udp from> any <to> any <=KEY>",
 			%udp_to_rules);
+		push(@rules, "=gap");
 		push(@rules, "=label not-filtering-udp");
 	}
 
 	push(@rules, "=skiprule tcp from any to any",
 		"=skipto not-filtering-tcp all from any to any");
+		push(@rules, "=gap");
 	gensect(undef, 0,
 		"<tcp from> any <=KEY> to any",
 		%tcp_from_rules);
+		push(@rules, "=gap");
 	gensect(undef, 0,
 		"<tcp from> any <to> any <=KEY>",
 		%tcp_to_rules);
+		push(@rules, "=gap");
 	push(@rules, "=label not-filtering-tcp");
 
 	push(@rules, "=rulenum 50000");
@@ -853,6 +884,18 @@ sub pass2
 				$y =~ s/=IN/$i/g;
 				push(@n, $y);
 			}
+		} elsif ($x =~ /=FROMUS/) {
+			for my $n (@from_us) {
+				my $y = $x;
+				$y =~ s/=FROMUS/$n/g;
+				push(@n, $y);
+			}
+		} elsif ($x =~ /=TOUS/) {
+			for my $n (@to_us) {
+				my $y = $x;
+				$y =~ s/=TOUS/$n/g;
+				push(@n, $y);
+			}
 		} elsif ($x =~ /=US/) {
 			my $l2 = $genlabel++;
 			for my $n (@not_us) {
@@ -892,7 +935,11 @@ sub pass3
 	my $c = 0;
 	for my $r (@rules) {
 		if ($r =~ /^=rulenum (\d+)/) {
-			$rulenum = $1 if $1 > $rulenum;
+			$rulenum = $1 - $inc if $1 > $rulenum;
+			$r = undef;
+		} elsif ($r =~ /^=gap\s*(\d*)/) {
+			my $gap = $1 || 1000;
+			$rulenum += $gap - $rulenum % $gap - $inc;
 			$r = undef;
 		} elsif ($r =~ /^=countby (\d+)/) {
 			$inc = $1;

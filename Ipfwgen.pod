@@ -12,6 +12,8 @@ BSD::Ipfwgen - Module to aid in the creation of ipfw-based firewalls
 	consolidate qw(**network list**);
 	us qw(**network list**);
 	not_us qw(**network list**);
+	to_us qw(**network list**);
+	from_us qw(**network list**);
 	symmetric qw(**network list**);
 
 	count_by_interface();
@@ -109,6 +111,16 @@ for the addresses specifed.
 Specifies networks that are within "us" but should not be.  For example,
 "us" may claim to include 209.66.121.0/24, but in reality, the first few
 addresses aren't ours.  This situation can be handled using "not_us".
+
+=item B<to_us>(NETWORKs)
+
+Specifies networks that we may legitimately receive traffic on 
+behalf of.  Don't filter it when incomming at the edges.
+
+=item B<from_us>(NETWORKs)
+
+Specifies networks that we may legitimately send traffic on 
+behalf of.  Don't filter it when outgoing at the edges.
 
 =item B<symmetric>(NETWORKs)
 
@@ -330,6 +342,11 @@ defined so don't be alarmed if you get an un-expected duplicate.
 
 If possible, set the current rule number to I<num>.
 
+=item =gap [I<size>]
+
+Make a gap in the rule numbering by rounding up to the
+next multiple of I<size>.
+
 =item =countby num
 
 When incrementing rule numbers, increment by I<num>.
@@ -388,6 +405,20 @@ still works.
 
 The =US specifier will be replaced by the network defined by the 
 B<us>() command.  If more than one network was defined, then the rule
+with the =US specifier will be replicated as necessary to put them all
+in.  =skiprule still works.
+
+=item =TOUS
+
+The =US specifier will be replaced by the network defined by the 
+B<to_us>() command.  If more than one network was defined, then the rule
+with the =US specifier will be replicated as necessary to put them all
+in.  =skiprule still works.
+
+=item =FROMUS
+
+The =FROMUS specifier will be replaced by the network defined by the 
+B<from_us>() command.  If more than one network was defined, then the rule
 with the =US specifier will be replicated as necessary to put them all
 in.  =skiprule still works.
 
